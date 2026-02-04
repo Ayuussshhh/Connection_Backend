@@ -2,6 +2,7 @@ import express from "express";
 import dotenv from "dotenv";
 import databaseRoutes from "./routes/databaseRoute.js";
 import tableRoutes from "./routes/tableRoutes.js";
+import foreignKeyRoutes from "./routes/foreignKeyRoute.js";
 import pool from "./utils/database.js";
 
 dotenv.config();
@@ -13,6 +14,7 @@ app.use(express.json());
 // Routes
 app.use("/db", databaseRoutes);
 app.use("/table", tableRoutes);
+app.use("/foreignKey", foreignKeyRoutes);
 
 app.get("/health", (req, res) => {
   res.status(200).json({ message: "Server is running fine." });
