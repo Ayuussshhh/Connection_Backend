@@ -2,6 +2,7 @@
 //!
 //! Configures all API routes and middleware.
 
+pub mod connection;
 mod database;
 mod foreign_key;
 mod table;
@@ -10,7 +11,7 @@ use crate::config::Settings;
 use crate::state::SharedState;
 use axum::{
     http::{header, Method},
-    routing::{get, post},
+    routing::{delete, get, post},
     Router,
 };
 use std::time::Duration;
@@ -48,7 +49,27 @@ pub fn create_router(state: SharedState, settings: &Settings) -> Router {
         // Health check
         .route("/health", get(health_check))
         
-        // Database routes
+        // ============================================
+        // NEW: Connection Management API (v2)
+        // Connect to any database with connection string
+        // ============================================
+        .route("/api/connections", post(connection::connect))
+        .route("/api/connections", get(connection::list_connections))
+        .route("/api/connections/test", post(connection::test_connection))
+        .route("/api/connections/active", get(connection::get_active))
+        .route("/api/connections/active", post(connection::set_active))
+        .route("/api/connections/disconnect-all", post(connection::disconnect_all))
+        .route("/api/connections/{id}", get(connection::get_connection))
+        .route("/api/connections/{id}", delete(connection::disconnect))
+        .route("/api/connections/{id}/introspect", post(connection::introspect))
+        
+        // Schema API (for active connection)
+        .route("/api/schema", get(connection::get_active_schema))
+        
+        // ============================================
+        // LEGACY: Original database routes (kept for compatibility)
+        // These use the old .env-based connection
+        // ============================================
         .route("/db/create", post(database::create_database))
         .route("/db/list", get(database::list_databases))
         .route("/db/connect", post(database::connect_database))
@@ -56,7 +77,7 @@ pub fn create_router(state: SharedState, settings: &Settings) -> Router {
         .route("/db/disconnect", post(database::disconnect_database))
         .route("/db/status", get(database::connection_status))
         
-        // Table routes
+        // Table routes (work with current active connection)
         .route("/table/create", post(table::create_table))
         .route("/table/list", get(table::list_tables))
         .route("/table/columns", get(table::get_columns))

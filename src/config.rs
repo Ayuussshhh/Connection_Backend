@@ -100,6 +100,8 @@ impl Settings {
                 .unwrap_or_else(|| ServerConfig::default().port),
         };
 
+        // Database config is now OPTIONAL
+        // If DB_PASSWORD is not set, we use defaults (and server starts without pre-configured DB)
         let database = DatabaseConfig {
             host: std::env::var("DB_HOST").unwrap_or_else(|_| "localhost".to_string()),
             port: std::env::var("DB_PORT")
@@ -107,9 +109,7 @@ impl Settings {
                 .and_then(|p| p.parse().ok())
                 .unwrap_or(5432),
             user: std::env::var("DB_USER").unwrap_or_else(|_| "postgres".to_string()),
-            password: std::env::var("DB_PASSWORD").map_err(|_| {
-                ConfigError::MissingVar("DB_PASSWORD is required".to_string())
-            })?,
+            password: std::env::var("DB_PASSWORD").unwrap_or_default(), // Optional now!
             database: std::env::var("DB_NAME").unwrap_or_else(|_| "postgres".to_string()),
             max_pool_size: std::env::var("DB_MAX_POOL_SIZE")
                 .ok()

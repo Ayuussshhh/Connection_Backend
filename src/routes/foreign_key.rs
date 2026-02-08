@@ -1,4 +1,7 @@
 //! Foreign key management route handlers
+//!
+//! These routes work with the currently active database connection.
+//! Use POST /api/connections to connect to a database first.
 
 use crate::db::queries::{
     SqlBuilder, CHECK_CONSTRAINT_EXISTS, GET_ALL_FOREIGN_KEYS, GET_FOREIGN_KEYS, GET_PRIMARY_KEYS,
@@ -16,8 +19,26 @@ use axum::{
     extract::{Query, State},
     Json,
 };
+use deadpool_postgres::Pool;
 use tracing::{debug, info, warn};
 use validator::Validate;
+
+/// Helper to get the active database pool
+async fn get_active_pool(state: &SharedState) -> Result<Pool, AppError> {
+    // First try the new connection manager
+    if let Ok(pool) = state.connections.get_active_pool().await {
+        return Ok(pool);
+    }
+    
+    // Fall back to legacy db if available
+    if let Some(ref db) = state.db {
+        return db.current_pool().await;
+    }
+    
+    Err(AppError::NotConnected(
+        "No active database connection. Use POST /api/connections to connect.".to_string()
+    ))
+}
 
 /// Create a foreign key constraint
 pub async fn create_foreign_key(
@@ -38,7 +59,7 @@ pub async fn create_foreign_key(
     );
 
     // Get current database pool
-    let pool = state.db.current_pool().await?;
+    let pool = get_active_pool(&state).await?;
     let client = pool.get().await?;
 
     // Check if constraint already exists
@@ -136,7 +157,7 @@ pub async fn list_foreign_keys(
     debug!("Listing foreign keys for table: {}", table_name);
 
     // Get current database pool
-    let pool = state.db.current_pool().await?;
+    let pool = get_active_pool(&state).await?;
     let client = pool.get().await?;
 
     let rows = client.query(GET_FOREIGN_KEYS, &[&table_name]).await?;
@@ -172,7 +193,7 @@ pub async fn list_all_foreign_keys(
     debug!("Listing all foreign keys in database");
 
     // Get current database pool
-    let pool = state.db.current_pool().await?;
+    let pool = get_active_pool(&state).await?;
     let client = pool.get().await?;
 
     let rows = client.query(GET_ALL_FOREIGN_KEYS, &[]).await?;
@@ -215,7 +236,7 @@ pub async fn delete_foreign_key(
     );
 
     // Get current database pool
-    let pool = state.db.current_pool().await?;
+    let pool = get_active_pool(&state).await?;
     let client = pool.get().await?;
 
     // Build and execute DROP CONSTRAINT query
@@ -258,7 +279,7 @@ pub async fn get_primary_keys(
     debug!("Getting primary keys for table: {}", table_name);
 
     // Get current database pool
-    let pool = state.db.current_pool().await?;
+    let pool = get_active_pool(&state).await?;
     let client = pool.get().await?;
 
     let rows = client.query(GET_PRIMARY_KEYS, &[&table_name]).await?;
@@ -294,7 +315,7 @@ pub async fn validate_reference(
     );
 
     // Get current database pool
-    let pool = state.db.current_pool().await?;
+    let pool = get_active_pool(&state).await?;
     let client = pool.get().await?;
 
     let rows = client

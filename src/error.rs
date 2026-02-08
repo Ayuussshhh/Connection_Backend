@@ -20,6 +20,9 @@ pub enum AppError {
     #[error("Pool error: {0}")]
     Pool(#[from] deadpool_postgres::PoolError),
 
+    #[error("Connection error: {0}")]
+    Connection(String),
+
     #[error("Connection not established: {0}")]
     NotConnected(String),
 
@@ -40,6 +43,9 @@ pub enum AppError {
 
     #[error("Configuration error: {0}")]
     Config(String),
+    
+    #[error("Introspection error: {0}")]
+    Introspection(String),
 }
 
 /// Error response structure
@@ -72,6 +78,15 @@ impl IntoResponse for AppError {
                     "POOL_EXHAUSTED",
                     "Database connection pool exhausted".to_string(),
                     Some(e.to_string()),
+                )
+            }
+            AppError::Connection(msg) => {
+                error!("Connection error: {}", msg);
+                (
+                    StatusCode::BAD_GATEWAY,
+                    "CONNECTION_ERROR",
+                    msg.clone(),
+                    None,
                 )
             }
             AppError::NotConnected(msg) => (
@@ -119,6 +134,15 @@ impl IntoResponse for AppError {
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "CONFIG_ERROR",
                     "A configuration error occurred".to_string(),
+                    Some(msg.clone()),
+                )
+            }
+            AppError::Introspection(msg) => {
+                error!("Introspection error: {}", msg);
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "INTROSPECTION_ERROR",
+                    "Failed to introspect database schema".to_string(),
                     Some(msg.clone()),
                 )
             }

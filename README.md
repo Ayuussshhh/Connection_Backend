@@ -1,28 +1,41 @@
-# Interactive Database API 🚀
+# SchemaFlow - Interactive Database Platform 🚀
 
-A high-performance, production-ready PostgreSQL database management REST API built with Rust.
+A **real-time collaborative database schema management platform** - think "Figma for Databases".
+
+Connect to any PostgreSQL database, visualize schemas, and collaborate on changes.
 
 ## ✨ Features
 
+- **Dynamic Connections**: Connect to ANY PostgreSQL database via connection string (no .env config needed!)
+- **Schema Introspection**: Automatically introspect tables, columns, foreign keys, and indexes
+- **Multi-Environment**: Support for development, staging, and production environments
 - **Blazing Fast**: Built with Rust and async I/O for maximum performance
 - **Type-Safe**: Leverages Rust's type system for compile-time guarantees
 - **Connection Pooling**: Efficient database connection management with deadpool
 - **Structured Logging**: Comprehensive tracing for debugging and monitoring
-- **Input Validation**: Request validation with detailed error messages
 - **CORS Support**: Configurable cross-origin resource sharing
-- **Graceful Shutdown**: Clean server shutdown handling
-- **Error Handling**: Unified error responses with proper HTTP status codes
+
+## 🎯 The Vision
+
+This is NOT just an ER diagram tool. SchemaFlow is the **meeting place for everyone who touches data**:
+
+- **Developers**: Visually propose and review schema changes
+- **DBAs**: Review migrations with visual diffs
+- **Architects**: Keep diagrams in sync with live databases
+- **Product Teams**: Understand data relationships without SQL
 
 ## 🏗️ Architecture
 
 ```
-rust-backend/
+Backend/
 ├── src/
 │   ├── main.rs           # Application entry point
 │   ├── config.rs         # Configuration management
+│   ├── connection.rs     # NEW: Dynamic connection manager
+│   ├── introspection.rs  # NEW: Schema introspection engine
 │   ├── error.rs          # Error types and handling
 │   ├── state.rs          # Application state
-│   ├── db.rs             # Database manager
+│   ├── db.rs             # Legacy database manager
 │   ├── db/
 │   │   └── queries.rs    # SQL queries and builders
 │   ├── models.rs         # Data models (re-exports)
@@ -31,11 +44,11 @@ rust-backend/
 │   │   ├── table.rs      # Table DTOs
 │   │   └── foreign_key.rs# Foreign key DTOs
 │   ├── routes.rs         # Router setup
-│   ├── routes/
-│   │   ├── database.rs   # Database handlers
-│   │   ├── table.rs      # Table handlers
-│   │   └── foreign_key.rs# Foreign key handlers
-│   └── handlers.rs       # Handler documentation
+│   └── routes/
+│       ├── connection.rs # NEW: Dynamic connection endpoints
+│       ├── database.rs   # Legacy database handlers
+│       ├── table.rs      # Table handlers
+│       └── foreign_key.rs# Foreign key handlers
 ├── Cargo.toml            # Dependencies
 ├── .env.example          # Environment template
 └── README.md             # This file
@@ -46,19 +59,20 @@ rust-backend/
 ### Prerequisites
 
 - Rust 1.75+ (install from [rustup.rs](https://rustup.rs))
-- PostgreSQL 12+
+- PostgreSQL 12+ (for connecting TO - not required to run server!)
 
 ### Installation
 
 1. **Clone and navigate to the project:**
    ```bash
-   cd rust-backend
+   cd Backend
    ```
 
-2. **Configure environment:**
+2. **Configure environment (OPTIONAL):**
    ```bash
    cp .env.example .env
-   # Edit .env with your PostgreSQL credentials
+   # Only needed if you want legacy database routes
+   # The server works without any .env config!
    ```
 
 3. **Build and run:**
@@ -69,6 +83,19 @@ rust-backend/
    # Production (optimized)
    cargo build --release
    ./target/release/interactive-db-api
+   ```
+
+4. **Connect to a database:**
+   ```bash
+   # Test connection
+   curl -X POST http://localhost:3000/api/connections/test \
+     -H "Content-Type: application/json" \
+     -d '{"connection_string": "postgresql://user:pass@host:5432/db"}'
+
+   # Create persistent connection
+   curl -X POST http://localhost:3000/api/connections \
+     -H "Content-Type: application/json" \
+     -d '{"connection_string": "postgresql://user:pass@host:5432/db", "alias": "My DB"}'
    ```
 
 ## 📚 API Reference
@@ -91,7 +118,96 @@ GET /health
 
 ---
 
-### Database Operations
+### 🔌 Dynamic Connections (NEW!)
+
+The core of SchemaFlow - connect to ANY PostgreSQL database with a connection string.
+
+#### Test Connection
+
+Test credentials without creating a persistent connection:
+
+```http
+POST /api/connections/test
+Content-Type: application/json
+
+{
+  "connection_string": "postgresql://user:pass@localhost:5432/mydb"
+}
+```
+
+#### Connect to Database
+
+Creates a persistent connection with pooling:
+
+```http
+POST /api/connections
+Content-Type: application/json
+
+{
+  "connection_string": "postgresql://user:pass@localhost:5432/mydb",
+  "alias": "My Production DB",
+  "environment": "production"  // "development" | "staging" | "production"
+}
+```
+
+**Response:**
+```json
+{
+  "id": "conn_abc123",
+  "environment": "production"
+}
+```
+
+#### List Active Connections
+
+```http
+GET /api/connections
+```
+
+#### Disconnect
+
+```http
+DELETE /api/connections/{id}
+```
+
+#### Introspect Schema
+
+Get full schema snapshot from a connected database:
+
+```http
+POST /api/connections/{id}/introspect
+```
+
+**Response:**
+```json
+{
+  "checksum": "sha256...",
+  "tables": [
+    {
+      "name": "users",
+      "schema": "public",
+      "columns": [...],
+      "foreign_keys": [...],
+      "indexes": [...]
+    }
+  ],
+  "captured_at": "2024-01-15T10:30:00Z"
+}
+```
+
+#### Get Current Schema
+
+Get schema from the active connection:
+
+```http
+GET /api/schema
+```
+
+---
+
+### Database Operations (Legacy)
+
+> **Note**: These endpoints work with connections established via `/api/connections` OR the legacy .env configuration.
 
 #### Create Database
 
@@ -110,7 +226,9 @@ Content-Type: application/json
 GET /db/list
 ```
 
-#### Connect to Database
+#### Connect to Database (Legacy)
+
+Uses .env credentials:
 
 ```http
 POST /db/connect
@@ -260,18 +378,22 @@ Content-Type: application/json
 
 ## 🔧 Configuration
 
-| Environment Variable | Description | Default |
-|---------------------|-------------|---------|
-| `HOST` | Server bind address | `127.0.0.1` |
-| `PORT` | Server port | `3000` |
-| `DB_HOST` | PostgreSQL host | `localhost` |
-| `DB_PORT` | PostgreSQL port | `5432` |
-| `DB_USER` | PostgreSQL user | `postgres` |
-| `DB_PASSWORD` | PostgreSQL password | **Required** |
-| `DB_NAME` | Default database | `postgres` |
-| `DB_MAX_POOL_SIZE` | Connection pool size | `10` |
-| `ALLOWED_ORIGINS` | CORS allowed origins | `http://localhost:3001` |
-| `RUST_LOG` | Log level | `info` |
+All database environment variables are **optional** when using dynamic connections via `/api/connections`.
+
+| Environment Variable | Description | Default | Required |
+|---------------------|-------------|---------|----------|
+| `HOST` | Server bind address | `127.0.0.1` | No |
+| `PORT` | Server port | `3000` | No |
+| `DB_HOST` | PostgreSQL host (legacy) | `localhost` | No |
+| `DB_PORT` | PostgreSQL port (legacy) | `5432` | No |
+| `DB_USER` | PostgreSQL user (legacy) | `postgres` | No |
+| `DB_PASSWORD` | PostgreSQL password (legacy) | `""` | No |
+| `DB_NAME` | Default database (legacy) | `postgres` | No |
+| `DB_MAX_POOL_SIZE` | Connection pool size | `10` | No |
+| `ALLOWED_ORIGINS` | CORS allowed origins | `http://localhost:3001` | No |
+| `RUST_LOG` | Log level | `info` | No |
+
+> **Pro tip**: For new projects, skip the .env file entirely and use connection strings via the API!
 
 ## 🧪 Development
 

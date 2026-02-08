@@ -1,4 +1,7 @@
 //! Table management route handlers
+//!
+//! These routes work with the currently active database connection.
+//! Use POST /api/connections to connect to a database first.
 
 use crate::db::queries::{SqlBuilder, GET_COLUMNS, LIST_TABLES};
 use crate::error::{validation_error, ApiResult, AppError};
@@ -11,8 +14,26 @@ use axum::{
     extract::{Query, State},
     Json,
 };
+use deadpool_postgres::Pool;
 use tracing::{debug, info};
 use validator::Validate;
+
+/// Helper to get the active database pool
+async fn get_active_pool(state: &SharedState) -> Result<Pool, AppError> {
+    // First try the new connection manager
+    if let Ok(pool) = state.connections.get_active_pool().await {
+        return Ok(pool);
+    }
+    
+    // Fall back to legacy db if available
+    if let Some(ref db) = state.db {
+        return db.current_pool().await;
+    }
+    
+    Err(AppError::NotConnected(
+        "No active database connection. Use POST /api/connections to connect.".to_string()
+    ))
+}
 
 /// Create a new table
 pub async fn create_table(
@@ -32,7 +53,7 @@ pub async fn create_table(
     debug!("Creating table: {} with {} columns", table_name, payload.columns.len());
 
     // Get current database pool
-    let pool = state.db.current_pool().await?;
+    let pool = get_active_pool(&state).await?;
     let client = pool.get().await?;
 
     // Build column definitions
@@ -68,7 +89,7 @@ pub async fn list_tables(
     debug!("Listing all tables");
 
     // Get current database pool
-    let pool = state.db.current_pool().await?;
+    let pool = get_active_pool(&state).await?;
     let client = pool.get().await?;
 
     let rows = client.query(LIST_TABLES, &[]).await?;
@@ -105,7 +126,7 @@ pub async fn get_columns(
     debug!("Getting columns for table: {}", table_name);
 
     // Get current database pool
-    let pool = state.db.current_pool().await?;
+    let pool = get_active_pool(&state).await?;
     let client = pool.get().await?;
 
     let rows = client.query(GET_COLUMNS, &[&table_name]).await?;
