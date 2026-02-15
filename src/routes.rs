@@ -5,6 +5,7 @@
 pub mod connection;
 mod database;
 mod foreign_key;
+pub mod pipeline;
 mod table;
 
 use crate::config::Settings;
@@ -50,7 +51,7 @@ pub fn create_router(state: SharedState, settings: &Settings) -> Router {
         .route("/health", get(health_check))
         
         // ============================================
-        // NEW: Connection Management API (v2)
+        // CONNECTION MANAGEMENT API
         // Connect to any database with connection string
         // ============================================
         .route("/api/connections", post(connection::connect))
@@ -65,6 +66,42 @@ pub fn create_router(state: SharedState, settings: &Settings) -> Router {
         
         // Schema API (for active connection)
         .route("/api/schema", get(connection::get_active_schema))
+        
+        // ============================================
+        // GOVERNANCE PIPELINE API
+        // Stage 1: Mirror (Introspection & Semantic Map)
+        // ============================================
+        .route("/api/connections/{id}/semantic-map", post(pipeline::build_semantic_map))
+        .route("/api/connections/{id}/drift", get(pipeline::check_drift))
+        
+        // ============================================
+        // Stage 2: Proposals (Schema PRs)
+        // ============================================
+        .route("/api/proposals", post(pipeline::create_proposal))
+        .route("/api/proposals", get(pipeline::list_proposals))
+        .route("/api/proposals/{id}", get(pipeline::get_proposal))
+        .route("/api/proposals/{id}/changes", post(pipeline::add_change_to_proposal))
+        .route("/api/proposals/{id}/migration", post(pipeline::generate_migration))
+        .route("/api/proposals/{id}/submit", post(pipeline::submit_for_review))
+        .route("/api/proposals/{id}/approve", post(pipeline::approve_proposal))
+        .route("/api/proposals/{id}/reject", post(pipeline::reject_proposal))
+        .route("/api/proposals/{id}/comments", post(pipeline::add_comment))
+        
+        // ============================================
+        // Stage 3: Risk Analysis
+        // ============================================
+        .route("/api/proposals/{id}/analyze", post(pipeline::analyze_risk))
+        
+        // ============================================
+        // Stage 4: Execution & Rollback
+        // ============================================
+        .route("/api/proposals/{id}/execute", post(pipeline::execute_proposal))
+        .route("/api/proposals/{id}/rollback", post(pipeline::rollback_proposal))
+        
+        // ============================================
+        // Audit Log
+        // ============================================
+        .route("/api/audit-log", get(pipeline::get_audit_log))
         
         // ============================================
         // LEGACY: Original database routes (kept for compatibility)

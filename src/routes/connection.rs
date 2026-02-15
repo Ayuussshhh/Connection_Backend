@@ -113,6 +113,7 @@ pub async fn list_connections(
 
 /// Request to get a specific connection
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct ConnectionIdPath {
     pub id: Uuid,
 }

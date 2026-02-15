@@ -28,7 +28,7 @@ pub struct SchemaSnapshot {
 
 impl SchemaSnapshot {
     /// Compute checksum from schema content
-    pub fn compute_checksum(tables: &[Table], foreign_keys: &[ForeignKey], indexes: &[Index]) -> String {
+    pub fn compute_checksum(tables: &[Table], foreign_keys: &[ForeignKey], _indexes: &[Index]) -> String {
         let mut hasher = Sha256::new();
         
         // Hash tables in sorted order for consistency
@@ -447,6 +447,7 @@ impl PostgresIntrospector {
 /// Drift detection result
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
 pub struct DriftReport {
     pub detected_at: DateTime<Utc>,
     pub has_drift: bool,
@@ -458,6 +459,7 @@ pub struct DriftReport {
 /// Individual drift change
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
 pub struct DriftChange {
     pub change_type: DriftChangeType,
     pub object_type: String,
@@ -467,6 +469,7 @@ pub struct DriftChange {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "snake_case")]
+#[allow(dead_code)]
 pub enum DriftChangeType {
     Added,
     Removed,
@@ -474,6 +477,7 @@ pub enum DriftChangeType {
 }
 
 /// Compare two schemas and detect drift
+#[allow(dead_code)]
 pub fn detect_drift(old: &SchemaSnapshot, new: &SchemaSnapshot) -> DriftReport {
     let mut changes = Vec::new();
     

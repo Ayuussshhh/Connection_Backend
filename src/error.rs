@@ -13,6 +13,7 @@ use tracing::error;
 
 /// Application-wide error type
 #[derive(Error, Debug)]
+#[allow(dead_code)]
 pub enum AppError {
     #[error("Database error: {0}")]
     Database(#[from] tokio_postgres::Error),
@@ -168,11 +169,13 @@ pub fn validation_error(msg: impl Into<String>) -> AppError {
 }
 
 /// Helper function to create a not found error
+#[allow(dead_code)]
 pub fn not_found_error(msg: impl Into<String>) -> AppError {
     AppError::NotFound(msg.into())
 }
 
 /// Helper function to create a conflict error
+#[allow(dead_code)]
 pub fn conflict_error(msg: impl Into<String>) -> AppError {
     AppError::Conflict(msg.into())
 }

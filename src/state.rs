@@ -4,6 +4,7 @@
 
 use crate::connection::ConnectionManager;
 use crate::db::DatabaseManager;
+use crate::pipeline::MetadataStore;
 use std::sync::Arc;
 
 /// Application state shared across all handlers
@@ -14,6 +15,9 @@ pub struct AppState {
     /// Legacy: Database manager instance (for backward compatibility)
     /// This is optional - server can start without .env database config
     pub db: Option<DatabaseManager>,
+    
+    /// Governance Pipeline: Metadata store for proposals, snapshots, and audit logs
+    pub metadata: MetadataStore,
 }
 
 impl AppState {
@@ -22,6 +26,7 @@ impl AppState {
         Self {
             connections: ConnectionManager::new(),
             db: None,
+            metadata: MetadataStore::new(),
         }
     }
     
@@ -30,6 +35,7 @@ impl AppState {
         Self {
             connections: ConnectionManager::new(),
             db: Some(db),
+            metadata: MetadataStore::new(),
         }
     }
 }

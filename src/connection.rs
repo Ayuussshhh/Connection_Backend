@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio_postgres::NoTls;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 use uuid::Uuid;
 
 /// Database type enum
@@ -109,6 +109,7 @@ impl ConnectionParams {
     }
 
     /// Convert back to connection string (with password masked for display)
+    #[allow(dead_code)]
     pub fn to_display_string(&self) -> String {
         format!(
             "postgres://{}:****@{}:{}/{}",
@@ -174,6 +175,7 @@ pub struct ConnectionManager {
     active_connection_id: RwLock<Option<Uuid>>,
     
     /// Default pool size for new connections
+    #[allow(dead_code)]
     default_pool_size: usize,
 }
 
@@ -188,6 +190,7 @@ impl ConnectionManager {
     }
 
     /// Create a new connection manager with custom pool size
+    #[allow(dead_code)]
     pub fn with_pool_size(pool_size: usize) -> Self {
         Self {
             connections: RwLock::new(HashMap::new()),
@@ -291,6 +294,7 @@ impl ConnectionManager {
     }
 
     /// Get active connection ID
+    #[allow(dead_code)]
     pub async fn get_active_connection_id(&self) -> Option<Uuid> {
         *self.active_connection_id.read().await
     }
@@ -364,6 +368,7 @@ impl ConnectionManager {
     }
 
     /// Check if any connection exists
+    #[allow(dead_code)]
     pub async fn has_connections(&self) -> bool {
         let connections = self.connections.read().await;
         !connections.is_empty()
@@ -411,9 +416,10 @@ impl ConnectionManager {
     }
 
     /// Update last introspected timestamp for a connection
+    #[allow(dead_code)]
     pub async fn update_introspected_at(&self, id: Uuid) -> Result<(), AppError> {
         let connections = self.connections.read().await;
-        if let Some(conn) = connections.get(&id) {
+        if let Some(_conn) = connections.get(&id) {
             // Note: In a real implementation, we'd need interior mutability here
             // For now, this is a placeholder
             debug!("Updated introspection timestamp for connection {}", id);

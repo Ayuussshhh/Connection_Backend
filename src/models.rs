@@ -23,6 +23,7 @@ pub struct SuccessResponse<T: Serialize> {
 }
 
 impl<T: Serialize> SuccessResponse<T> {
+    #[allow(dead_code)]
     pub fn new(message: impl Into<String>, data: Option<T>) -> Self {
         Self {
             success: true,
@@ -39,6 +40,7 @@ impl<T: Serialize> SuccessResponse<T> {
         }
     }
 
+    #[allow(dead_code)]
     pub fn message_only(message: impl Into<String>) -> SuccessResponse<()> {
         SuccessResponse {
             success: true,

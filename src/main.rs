@@ -5,14 +5,20 @@
 //! NEW ARCHITECTURE: The server now supports dynamic database connections.
 //! You no longer need to configure a database in .env - users can connect
 //! to any database by providing a connection string via the API.
+//!
+//! GOVERNANCE PIPELINE: The server now includes a full governance pipeline:
+//! - Stage 1 (Mirror): Schema introspection with semantic mapping
+//! - Stage 2 (Proposal): Schema change proposals (like GitHub PRs)
+//! - Stage 3 (Brain): Risk analysis and safety scoring
+//! - Stage 4 (Orchestrator): Safe execution with rollback capability
 
 mod config;
 mod connection;
 mod db;
 mod error;
-mod handlers;
 mod introspection;
 mod models;
+mod pipeline;
 mod routes;
 mod state;
 
@@ -61,10 +67,26 @@ async fn main() -> anyhow::Result<()> {
     info!("🌐 Server listening on http://{}", addr);
     info!("");
     info!("📚 API Endpoints:");
+    info!("   ─── Connection Management ───");
     info!("   POST /api/connections          - Connect to a database");
     info!("   GET  /api/connections          - List all connections");
     info!("   POST /api/connections/test     - Test a connection");
     info!("   GET  /api/schema               - Get schema for active connection");
+    info!("");
+    info!("   ─── Governance Pipeline ───");
+    info!("   POST /api/pipeline/mirror      - Build semantic map (Stage 1)");
+    info!("   POST /api/pipeline/drift       - Check for schema drift");
+    info!("   POST /api/pipeline/proposals   - Create new proposal (Stage 2)");
+    info!("   GET  /api/pipeline/proposals   - List all proposals");
+    info!("   POST /api/pipeline/proposals/:id/changes   - Add change to proposal");
+    info!("   POST /api/pipeline/proposals/:id/migration - Generate migration SQL");
+    info!("   POST /api/pipeline/proposals/:id/submit    - Submit for review");
+    info!("   POST /api/pipeline/proposals/:id/approve   - Approve proposal");
+    info!("   POST /api/pipeline/proposals/:id/reject    - Reject proposal");
+    info!("   POST /api/pipeline/risk        - Analyze risk (Stage 3)");
+    info!("   POST /api/pipeline/execute     - Execute proposal (Stage 4)");
+    info!("   POST /api/pipeline/rollback    - Rollback execution");
+    info!("   GET  /api/pipeline/audit       - View audit log");
     info!("");
 
     // Create TCP listener and serve

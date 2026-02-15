@@ -7,6 +7,7 @@ use std::net::Ipv4Addr;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
+#[allow(dead_code)]
 pub enum ConfigError {
     #[error("Failed to load environment variables: {0}")]
     EnvLoad(#[from] dotenvy::Error),
