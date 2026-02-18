@@ -325,7 +325,7 @@ impl PostgresIntrospector {
         let query = r#"
             SELECT 
                 tc.constraint_name,
-                array_agg(kcu.column_name ORDER BY kcu.ordinal_position) as columns
+                COALESCE(array_agg(kcu.column_name::text ORDER BY kcu.ordinal_position), ARRAY[]::text[]) as columns
             FROM information_schema.table_constraints tc
             JOIN information_schema.key_column_usage kcu 
                 ON tc.constraint_name = kcu.constraint_name
@@ -339,9 +339,11 @@ impl PostgresIntrospector {
         let rows = client.query(query, &[&schema, &table]).await?;
         
         if let Some(row) = rows.first() {
+            let constraint_name: String = row.get("constraint_name");
+            let columns: Vec<String> = row.try_get("columns").unwrap_or_default();
             Ok(Some(PrimaryKey {
-                constraint_name: row.get("constraint_name"),
-                columns: row.get("columns"),
+                constraint_name,
+                columns,
             }))
         } else {
             Ok(None)
@@ -355,10 +357,10 @@ impl PostgresIntrospector {
                 tc.constraint_name,
                 tc.table_schema as source_schema,
                 tc.table_name as source_table,
-                array_agg(kcu.column_name ORDER BY kcu.ordinal_position) as source_columns,
+                COALESCE(array_agg(kcu.column_name::text ORDER BY kcu.ordinal_position), ARRAY[]::text[]) as source_columns,
                 ccu.table_schema as referenced_schema,
                 ccu.table_name as referenced_table,
-                array_agg(ccu.column_name ORDER BY kcu.ordinal_position) as referenced_columns,
+                COALESCE(array_agg(ccu.column_name::text ORDER BY kcu.ordinal_position), ARRAY[]::text[]) as referenced_columns,
                 rc.update_rule as on_update,
                 rc.delete_rule as on_delete
             FROM information_schema.table_constraints tc
@@ -391,10 +393,10 @@ impl PostgresIntrospector {
                 constraint_name: row.get("constraint_name"),
                 source_schema: row.get("source_schema"),
                 source_table: row.get("source_table"),
-                source_columns: row.get("source_columns"),
+                source_columns: row.try_get("source_columns").unwrap_or_default(),
                 referenced_schema: row.get("referenced_schema"),
                 referenced_table: row.get("referenced_table"),
-                referenced_columns: row.get("referenced_columns"),
+                referenced_columns: row.try_get("referenced_columns").unwrap_or_default(),
                 on_update: row.get("on_update"),
                 on_delete: row.get("on_delete"),
             }
@@ -410,7 +412,7 @@ impl PostgresIntrospector {
                 i.relname as index_name,
                 n.nspname as schema_name,
                 t.relname as table_name,
-                array_agg(a.attname ORDER BY array_position(ix.indkey, a.attnum)) as columns,
+                COALESCE(array_agg(a.attname::text ORDER BY array_position(ix.indkey, a.attnum)), ARRAY[]::text[]) as columns,
                 ix.indisunique as is_unique,
                 ix.indisprimary as is_primary,
                 am.amname as index_type
@@ -433,7 +435,7 @@ impl PostgresIntrospector {
                 name: row.get("index_name"),
                 schema: row.get("schema_name"),
                 table: row.get("table_name"),
-                columns: row.get("columns"),
+                columns: row.try_get("columns").unwrap_or_default(),
                 is_unique: row.get("is_unique"),
                 is_primary: row.get("is_primary"),
                 index_type: row.get("index_type"),

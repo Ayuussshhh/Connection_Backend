@@ -10,7 +10,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tokio_postgres::NoTls;
 use tracing::{debug, info};
 use uuid::Uuid;
 
@@ -56,6 +55,21 @@ pub enum ConnectionStatus {
     Connected,
     Disconnected,
     Error(String),
+}
+
+/// Helper function to create a TLS connector for ssl-required databases like Neon
+fn create_tls_connector() -> Result<tokio_postgres_rustls::MakeRustlsConnect, AppError> {
+    let certs = rustls_native_certs::load_native_certs();
+    let mut root_store = rustls::RootCertStore::empty();
+    for cert in certs.certs {
+        root_store.add(cert).ok();
+    }
+    
+    let config = rustls::ClientConfig::builder()
+        .with_root_certificates(root_store)
+        .with_no_client_auth();
+    
+    Ok(tokio_postgres_rustls::MakeRustlsConnect::new(config))
 }
 
 /// Parsed connection parameters from a connection string
@@ -273,7 +287,10 @@ impl ConnectionManager {
             recycling_method: RecyclingMethod::Fast,
         });
 
-        cfg.create_pool(Some(Runtime::Tokio1), NoTls)
+        // Use TLS for all connections (supports both SSL and non-SSL servers)
+        let tls = create_tls_connector()?;
+
+        cfg.create_pool(Some(Runtime::Tokio1), tls)
             .map_err(|e| AppError::Config(format!("Failed to create pool: {}", e)))
     }
 
@@ -390,18 +407,26 @@ impl ConnectionManager {
         cfg.user = Some(params.user.clone());
         cfg.password = Some(params.password.clone());
         cfg.dbname = Some(params.database.clone());
+        cfg.manager = Some(ManagerConfig {
+            recycling_method: RecyclingMethod::Fast,
+        });
 
-        let pool = cfg.create_pool(Some(Runtime::Tokio1), NoTls)
+        // Use TLS for all connections (supports both SSL and non-SSL servers)
+        let tls = create_tls_connector()?;
+
+        let pool = cfg.create_pool(Some(Runtime::Tokio1), tls)
             .map_err(|e| AppError::Config(format!("Failed to create test pool: {}", e)))?;
 
         let start = std::time::Instant::now();
         
         let client = pool.get().await.map_err(|e| {
-            AppError::Connection(format!("Failed to connect: {}", e))
+            AppError::Connection(format!("Failed to connect: {} (Check host, port, credentials, and database name. For Neon, ensure the connection string is correct)", e))
         })?;
 
         // Get server version
-        let row = client.query_one("SELECT version()", &[]).await?;
+        let row = client.query_one("SELECT version()", &[]).await.map_err(|e| {
+            AppError::Connection(format!("Failed to query server version: {}", e))
+        })?;
         let version: String = row.get(0);
         
         let latency = start.elapsed();

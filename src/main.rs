@@ -1,17 +1,18 @@
-//! Interactive Database API - A high-performance PostgreSQL management service
+//! SchemaFlow API - Database Governance Platform
 //!
-//! This is the main entry point for the application.
+//! A "GitHub PR for Databases" - propose, review, and safely execute schema changes.
 //! 
 //! NEW ARCHITECTURE: The server now supports dynamic database connections.
 //! You no longer need to configure a database in .env - users can connect
 //! to any database by providing a connection string via the API.
 //!
-//! GOVERNANCE PIPELINE: The server now includes a full governance pipeline:
+//! GOVERNANCE PIPELINE: The server includes a full governance workflow:
 //! - Stage 1 (Mirror): Schema introspection with semantic mapping
-//! - Stage 2 (Proposal): Schema change proposals (like GitHub PRs)
-//! - Stage 3 (Brain): Risk analysis and safety scoring
-//! - Stage 4 (Orchestrator): Safe execution with rollback capability
+//! - Stage 2 (Proposal): Schema change proposals with review workflow
+//! - Stage 3 (Simulate): Risk analysis, dry-run validation, impact assessment
+//! - Stage 4 (Execute): Safe execution with rollback capability
 
+mod auth;
 mod config;
 mod connection;
 mod db;
@@ -19,8 +20,11 @@ mod error;
 mod introspection;
 mod models;
 mod pipeline;
+mod proposal;
 mod routes;
+mod simulation;
 mod state;
+mod users;
 
 use crate::config::Settings;
 use crate::db::DatabaseManager;
@@ -37,26 +41,40 @@ async fn main() -> anyhow::Result<()> {
     // Initialize tracing subscriber for structured logging
     init_tracing();
 
-    info!("🚀 Starting SchemaFlow - Interactive Database Platform...");
+    info!("🚀 Starting SchemaFlow - Database Governance Platform...");
 
     // Load configuration
     let settings = Settings::load()?;
     info!("📋 Configuration loaded successfully");
+    
+    // Get JWT secret from environment or generate a default (for dev only)
+    let jwt_secret = std::env::var("JWT_SECRET")
+        .unwrap_or_else(|_| {
+            warn!("⚠️  JWT_SECRET not set, using default (INSECURE - set in production!)");
+            "schemaflow-dev-secret-change-in-production".to_string()
+        });
 
     // Try to initialize legacy database manager (optional)
     // If .env has database config, use it for backward compatibility
     let state = match DatabaseManager::new(&settings.database).await {
         Ok(db_manager) => {
             info!("🔌 Legacy database connection established (from .env)");
-            Arc::new(AppState::with_legacy_db(db_manager))
+            Arc::new(AppState::with_legacy_db(db_manager, jwt_secret))
         }
         Err(e) => {
             warn!("⚠️  No legacy database configured: {}", e);
             info!("💡 Server starting without pre-configured database.");
             info!("   Use POST /api/connections to connect to any database.");
-            Arc::new(AppState::new())
+            Arc::new(AppState::new(jwt_secret))
         }
     };
+    
+    // Initialize default admin user
+    if let Err(e) = state.users.init_default_admin().await {
+        warn!("⚠️  Failed to initialize default admin: {}", e);
+    } else {
+        info!("👤 Default admin user initialized (admin@schemaflow.local / admin123)");
+    }
 
     // Build the router
     let app = create_router(state, &settings);
@@ -67,6 +85,12 @@ async fn main() -> anyhow::Result<()> {
     info!("🌐 Server listening on http://{}", addr);
     info!("");
     info!("📚 API Endpoints:");
+    info!("   ─── Authentication ───");
+    info!("   POST /api/auth/login           - Login with email/password");
+    info!("   POST /api/auth/register        - Register new account");
+    info!("   POST /api/auth/refresh         - Refresh access token");
+    info!("   GET  /api/auth/me              - Get current user");
+    info!("");
     info!("   ─── Connection Management ───");
     info!("   POST /api/connections          - Connect to a database");
     info!("   GET  /api/connections          - List all connections");
@@ -74,19 +98,12 @@ async fn main() -> anyhow::Result<()> {
     info!("   GET  /api/schema               - Get schema for active connection");
     info!("");
     info!("   ─── Governance Pipeline ───");
-    info!("   POST /api/pipeline/mirror      - Build semantic map (Stage 1)");
-    info!("   POST /api/pipeline/drift       - Check for schema drift");
-    info!("   POST /api/pipeline/proposals   - Create new proposal (Stage 2)");
-    info!("   GET  /api/pipeline/proposals   - List all proposals");
-    info!("   POST /api/pipeline/proposals/:id/changes   - Add change to proposal");
-    info!("   POST /api/pipeline/proposals/:id/migration - Generate migration SQL");
-    info!("   POST /api/pipeline/proposals/:id/submit    - Submit for review");
-    info!("   POST /api/pipeline/proposals/:id/approve   - Approve proposal");
-    info!("   POST /api/pipeline/proposals/:id/reject    - Reject proposal");
-    info!("   POST /api/pipeline/risk        - Analyze risk (Stage 3)");
-    info!("   POST /api/pipeline/execute     - Execute proposal (Stage 4)");
-    info!("   POST /api/pipeline/rollback    - Rollback execution");
-    info!("   GET  /api/pipeline/audit       - View audit log");
+    info!("   POST /api/proposals            - Create new proposal");
+    info!("   GET  /api/proposals            - List all proposals");
+    info!("   POST /api/proposals/:id/submit - Submit for review");
+    info!("   POST /api/proposals/:id/approve - Approve (Admin only)");
+    info!("   POST /api/proposals/:id/analyze - Risk analysis");
+    info!("   POST /api/proposals/:id/execute - Execute migration");
     info!("");
 
     // Create TCP listener and serve

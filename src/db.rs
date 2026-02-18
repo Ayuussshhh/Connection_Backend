@@ -8,8 +8,22 @@ use crate::config::DatabaseConfig;
 use crate::error::AppError;
 use deadpool_postgres::{Config, ManagerConfig, Pool, RecyclingMethod, Runtime};
 use tokio::sync::RwLock;
-use tokio_postgres::NoTls;
 use tracing::{debug, info};
+
+/// Helper function to create a TLS connector for ssl-required databases like Neon
+fn create_tls_connector() -> Result<tokio_postgres_rustls::MakeRustlsConnect, AppError> {
+    let certs = rustls_native_certs::load_native_certs();
+    let mut root_store = rustls::RootCertStore::empty();
+    for cert in certs.certs {
+        root_store.add(cert).ok();
+    }
+    
+    let config = rustls::ClientConfig::builder()
+        .with_root_certificates(root_store)
+        .with_no_client_auth();
+    
+    Ok(tokio_postgres_rustls::MakeRustlsConnect::new(config))
+}
 
 /// Database connection configuration
 #[derive(Debug, Clone)]
@@ -93,7 +107,10 @@ impl DatabaseManager {
             recycling_method: RecyclingMethod::Fast,
         });
 
-        cfg.create_pool(Some(Runtime::Tokio1), NoTls)
+        // Use TLS for all connections (supports both SSL and non-SSL servers)
+        let tls = create_tls_connector()?;
+
+        cfg.create_pool(Some(Runtime::Tokio1), tls)
             .map_err(|e| AppError::Config(format!("Failed to create pool: {}", e)))
     }
 

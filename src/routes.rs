@@ -2,6 +2,7 @@
 //!
 //! Configures all API routes and middleware.
 
+pub mod auth;
 pub mod connection;
 mod database;
 mod foreign_key;
@@ -12,7 +13,7 @@ use crate::config::Settings;
 use crate::state::SharedState;
 use axum::{
     http::{header, Method},
-    routing::{delete, get, post},
+    routing::{delete, get, post, put},
     Router,
 };
 use std::time::Duration;
@@ -49,6 +50,17 @@ pub fn create_router(state: SharedState, settings: &Settings) -> Router {
     Router::new()
         // Health check
         .route("/health", get(health_check))
+        
+        // ============================================
+        // AUTHENTICATION API
+        // JWT-based auth with role-based access control
+        // ============================================
+        .route("/api/auth/login", post(auth::login))
+        .route("/api/auth/register", post(auth::register))
+        .route("/api/auth/refresh", post(auth::refresh))
+        .route("/api/auth/me", get(auth::me))
+        .route("/api/auth/role/{user_id}", put(auth::update_role))
+        .route("/api/users", get(auth::list_users))
         
         // ============================================
         // CONNECTION MANAGEMENT API

@@ -47,6 +47,12 @@ pub enum AppError {
     
     #[error("Introspection error: {0}")]
     Introspection(String),
+
+    #[error("Unauthorized: {0}")]
+    Unauthorized(String),
+
+    #[error("Forbidden: {0}")]
+    Forbidden(String),
 }
 
 /// Error response structure
@@ -147,6 +153,18 @@ impl IntoResponse for AppError {
                     Some(msg.clone()),
                 )
             }
+            AppError::Unauthorized(msg) => (
+                StatusCode::UNAUTHORIZED,
+                "UNAUTHORIZED",
+                msg.clone(),
+                None,
+            ),
+            AppError::Forbidden(msg) => (
+                StatusCode::FORBIDDEN,
+                "FORBIDDEN",
+                msg.clone(),
+                None,
+            ),
         };
 
         let body = Json(ErrorResponse {
