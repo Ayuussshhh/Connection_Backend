@@ -20,7 +20,8 @@ COPY src ./src
 RUN cargo build --release
 
 # Stage 2: Runtime
-FROM debian:bookworm-slim
+# Use ubuntu:24.04 instead of debian:bookworm-slim for GLIBC 2.38 compatibility
+FROM ubuntu:24.04
 
 WORKDIR /app
 
@@ -28,10 +29,14 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y \
     ca-certificates \
     libssl3 \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy the binary from builder
 COPY --from=builder /app/target/release/schemaflow-api ./schemaflow-api
+
+# Make binary executable
+RUN chmod +x ./schemaflow-api
 
 # Expose port
 EXPOSE 3000
