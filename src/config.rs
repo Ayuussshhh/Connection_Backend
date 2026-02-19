@@ -32,7 +32,7 @@ pub struct ServerConfig {
 impl Default for ServerConfig {
     fn default() -> Self {
         Self {
-            host: Ipv4Addr::new(127, 0, 0, 1),
+            host: Ipv4Addr::new(0, 0, 0, 0), // Bind to 0.0.0.0 for Railway/Docker
             port: 3000,
         }
     }
