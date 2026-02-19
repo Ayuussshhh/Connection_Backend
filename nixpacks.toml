@@ -1,3 +1,6 @@
+[buildConfig]
+rustVersion = "1.93.1"
+
 [phases.setup]
 nixPkgs = ["openssl", "pkg-config"]
 
