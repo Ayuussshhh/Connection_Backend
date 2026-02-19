@@ -3,10 +3,11 @@
 //! Provides JWT-based authentication and role-based access control.
 
 mod jwt;
-mod middleware;
+pub mod middleware;
 mod password;
 
 pub use jwt::{Claims, TokenPair, create_tokens, decode_token, refresh_tokens};
+#[allow(unused_imports)]
 pub use middleware::auth_middleware;
 pub use password::{hash_password, verify_password};
 

@@ -148,7 +148,7 @@ pub async fn build_semantic_map(
 /// GET /api/connections/{id}/drift
 /// Check for schema drift
 pub async fn check_drift(
-    State(state): State<SharedState>,
+    State(_state): State<SharedState>,
     Path(connection_id): Path<Uuid>,
 ) -> Result<Json<SuccessResponse<DriftResponse>>, AppError> {
     let mirror = MirrorService::new();

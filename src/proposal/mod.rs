@@ -9,5 +9,6 @@ mod migration;
 
 pub use models::*;
 pub use store::ProposalStore;
+#[allow(unused_imports)]
 pub use changes::*;
 pub use migration::MigrationGenerator;

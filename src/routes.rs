@@ -7,8 +7,10 @@ pub mod connection;
 mod database;
 mod foreign_key;
 pub mod pipeline;
+pub mod snapshot;
 mod table;
 
+use crate::auth::middleware::auth_middleware;
 use crate::config::Settings;
 use crate::state::SharedState;
 use axum::{
@@ -46,18 +48,11 @@ pub fn create_router(state: SharedState, settings: &Settings) -> Router {
         .layer(cors)
         .propagate_x_request_id();
 
-    // Build the router
-    Router::new()
-        // Health check
-        .route("/health", get(health_check))
-        
+    // Protected routes that require authentication
+    let protected_routes = Router::new()
         // ============================================
-        // AUTHENTICATION API
-        // JWT-based auth with role-based access control
+        // AUTHENTICATION API (Protected)
         // ============================================
-        .route("/api/auth/login", post(auth::login))
-        .route("/api/auth/register", post(auth::register))
-        .route("/api/auth/refresh", post(auth::refresh))
         .route("/api/auth/me", get(auth::me))
         .route("/api/auth/role/{user_id}", put(auth::update_role))
         .route("/api/users", get(auth::list_users))
@@ -111,9 +106,41 @@ pub fn create_router(state: SharedState, settings: &Settings) -> Router {
         .route("/api/proposals/{id}/rollback", post(pipeline::rollback_proposal))
         
         // ============================================
+        // SCHEMA SNAPSHOTS & IMPACT ANALYSIS
+        // Core feature: "What breaks if I change this?"
+        // ============================================
+        .route("/api/connections/{id}/snapshots", post(snapshot::create_snapshot))
+        .route("/api/connections/{id}/snapshots", get(snapshot::list_snapshots))
+        .route("/api/connections/{id}/snapshots/latest", get(snapshot::get_latest_snapshot))
+        .route("/api/connections/{id}/snapshots/{version}", get(snapshot::get_snapshot_version))
+        .route("/api/connections/{id}/snapshots/diff", get(snapshot::diff_snapshots))
+        .route("/api/connections/{id}/snapshots/{snapshot_id}/baseline", post(snapshot::set_baseline))
+        .route("/api/connections/{id}/blast-radius", post(snapshot::analyze_blast_radius))
+        .route("/api/connections/{id}/schema-drift", get(snapshot::check_drift))
+        .route("/api/rules", get(snapshot::list_rules))
+        
+        // ============================================
         // Audit Log
         // ============================================
         .route("/api/audit-log", get(pipeline::get_audit_log))
+        
+        // Apply auth middleware to all protected routes
+        .layer(axum::middleware::from_fn(auth_middleware));
+    
+    // Build the main router
+    Router::new()
+        // Health check
+        .route("/health", get(health_check))
+        
+        // ============================================
+        // AUTHENTICATION API (Public)
+        // ============================================
+        .route("/api/auth/login", post(auth::login))
+        .route("/api/auth/register", post(auth::register))
+        .route("/api/auth/refresh", post(auth::refresh))
+        
+        // Merge protected routes
+        .merge(protected_routes)
         
         // ============================================
         // LEGACY: Original database routes (kept for compatibility)

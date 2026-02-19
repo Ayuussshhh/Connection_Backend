@@ -6,6 +6,7 @@ use crate::connection::ConnectionManager;
 use crate::db::DatabaseManager;
 use crate::pipeline::MetadataStore;
 use crate::proposal::ProposalStore;
+use crate::snapshot::{SnapshotStore, RulesEngine};
 use crate::users::UserStore;
 use std::sync::Arc;
 
@@ -27,6 +28,12 @@ pub struct AppState {
     /// Proposal management store (has internal locking)
     pub proposals: ProposalStore,
     
+    /// Schema snapshot store for versioned schema tracking
+    pub snapshots: SnapshotStore,
+    
+    /// Rules engine for governance guardrails
+    pub rules: RulesEngine,
+    
     /// JWT secret key for token signing
     pub jwt_secret: String,
 }
@@ -40,6 +47,8 @@ impl AppState {
             metadata: MetadataStore::new(),
             users: UserStore::new(),
             proposals: ProposalStore::new(),
+            snapshots: SnapshotStore::new(),
+            rules: RulesEngine::new(),
             jwt_secret,
         }
     }
@@ -52,6 +61,8 @@ impl AppState {
             metadata: MetadataStore::new(),
             users: UserStore::new(),
             proposals: ProposalStore::new(),
+            snapshots: SnapshotStore::new(),
+            rules: RulesEngine::new(),
             jwt_secret,
         }
     }

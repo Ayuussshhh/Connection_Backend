@@ -1,7 +1,9 @@
 //! Schema types for the governance pipeline
 
+#[allow(unused_imports)]
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+#[allow(unused_imports)]
 use uuid::Uuid;
 
 /// Schema change types

@@ -23,6 +23,7 @@ mod pipeline;
 mod proposal;
 mod routes;
 mod simulation;
+mod snapshot;
 mod state;
 mod users;
 
@@ -104,6 +105,14 @@ async fn main() -> anyhow::Result<()> {
     info!("   POST /api/proposals/:id/approve - Approve (Admin only)");
     info!("   POST /api/proposals/:id/analyze - Risk analysis");
     info!("   POST /api/proposals/:id/execute - Execute migration");
+    info!("");
+    info!("   ─── Impact Analysis (Core Feature) ───");
+    info!("   POST /api/connections/:id/snapshots    - Create schema snapshot");
+    info!("   GET  /api/connections/:id/snapshots    - List all snapshots");
+    info!("   GET  /api/connections/:id/snapshots/diff - Compare snapshots");
+    info!("   POST /api/connections/:id/blast-radius - Analyze impact of changes");
+    info!("   GET  /api/connections/:id/schema-drift - Check drift from baseline");
+    info!("   GET  /api/rules                        - List governance rules");
     info!("");
 
     // Create TCP listener and serve
