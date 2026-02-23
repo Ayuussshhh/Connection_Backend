@@ -4,11 +4,13 @@
 
 pub mod database;
 pub mod foreign_key;
+pub mod project;
 pub mod table;
 
 // Re-export commonly used types
 pub use database::*;
 pub use foreign_key::*;
+pub use project::*;
 pub use table::*;
 
 use serde::Serialize;
@@ -18,7 +20,7 @@ use serde::Serialize;
 pub struct SuccessResponse<T: Serialize> {
     pub success: bool,
     pub message: String,
-    #[serde(flatten)]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub data: Option<T>,
 }
 
@@ -53,15 +55,14 @@ impl<T: Serialize> SuccessResponse<T> {
 /// Message-only response (no data)
 #[derive(Serialize)]
 pub struct MessageResponse {
-    pub success: bool,
     pub message: String,
 }
 
 impl MessageResponse {
     pub fn new(message: impl Into<String>) -> Self {
         Self {
-            success: true,
             message: message.into(),
         }
     }
 }
+

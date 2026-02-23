@@ -8,7 +8,6 @@ use chrono::{Duration, Utc};
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 /// JWT secret key (should be from environment in production)
 static JWT_SECRET: Lazy<String> = Lazy::new(|| {
@@ -26,8 +25,8 @@ const REFRESH_TOKEN_EXPIRATION_DAYS: i64 = 7;
 /// JWT claims
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Claims {
-    /// Subject (user ID)
-    pub sub: Uuid,
+    /// Subject (user ID) - can be UUID or numeric ID
+    pub sub: String,
     /// User email
     pub email: String,
     /// User role
@@ -58,12 +57,13 @@ pub struct TokenPair {
 }
 
 /// Create access and refresh tokens for a user
-pub fn create_tokens(user_id: Uuid, email: &str, role: Role) -> Result<TokenPair, AppError> {
+pub fn create_tokens(user_id: impl Into<String>, email: &str, role: Role) -> Result<TokenPair, AppError> {
+    let user_id_str = user_id.into();
     let now = Utc::now();
     
     // Create access token
     let access_claims = Claims {
-        sub: user_id,
+        sub: user_id_str.clone(),
         email: email.to_string(),
         role,
         exp: (now + Duration::minutes(ACCESS_TOKEN_EXPIRATION_MINUTES)).timestamp(),
@@ -79,7 +79,7 @@ pub fn create_tokens(user_id: Uuid, email: &str, role: Role) -> Result<TokenPair
     
     // Create refresh token
     let refresh_claims = Claims {
-        sub: user_id,
+        sub: user_id_str,
         email: email.to_string(),
         role,
         exp: (now + Duration::days(REFRESH_TOKEN_EXPIRATION_DAYS)).timestamp(),

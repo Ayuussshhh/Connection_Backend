@@ -72,6 +72,24 @@ fn create_tls_connector() -> Result<tokio_postgres_rustls::MakeRustlsConnect, Ap
     Ok(tokio_postgres_rustls::MakeRustlsConnect::new(config))
 }
 
+/// Determine if TLS should be used based on the host
+fn should_use_tls(host: &str) -> bool {
+    // Local connections never need TLS
+    if host == "localhost" || host == "127.0.0.1" || host == "::1" {
+        return false;
+    }
+    
+    // Neon requires TLS - it's the main provider that mandates it
+    if host.contains("neon.tech") || host.contains(".neon.") {
+        return true;
+    }
+    
+    // For all other providers (AWS RDS, local, DigitalOcean, Azure, etc.)
+    // Don't force TLS - let PostgreSQL negotiate based on sslmode parameter
+    // This allows better compatibility with various database services
+    false
+}
+
 /// Parsed connection parameters from a connection string
 #[derive(Debug, Clone)]
 pub struct ConnectionParams {
@@ -81,11 +99,12 @@ pub struct ConnectionParams {
     pub password: String,
     pub database: String,
     pub db_type: DatabaseType,
+    pub use_tls: bool,
 }
 
 impl ConnectionParams {
     /// Parse a PostgreSQL connection string
-    /// Format: postgres://user:password@host:port/database
+    /// Format: postgres://user:password@host:port/database[?sslmode=disable|require|prefer]
     pub fn from_connection_string(conn_str: &str) -> Result<Self, AppError> {
         let url = url::Url::parse(conn_str)
             .map_err(|e| AppError::Config(format!("Invalid connection string: {}", e)))?;
@@ -112,6 +131,25 @@ impl ConnectionParams {
             return Err(AppError::Config("Missing database name in connection string".to_string()));
         }
 
+        // Parse sslmode from query parameters
+        // Supported: disable, allow, prefer, require
+        let sslmode = url.query_pairs()
+            .find(|(key, _)| key == "sslmode")
+            .map(|(_, value)| value.to_string());
+
+        let use_tls = match sslmode.as_deref() {
+            Some("disable") => false,
+            Some("allow") | Some("prefer") | Some("require") => true,
+            Some(_) => {
+                // Invalid mode, try to use smart detection
+                should_use_tls(&host)
+            },
+            None => {
+                // No explicit sslmode, use smart detection
+                should_use_tls(&host)
+            }
+        };
+
         Ok(Self {
             host,
             port,
@@ -119,6 +157,7 @@ impl ConnectionParams {
             password,
             database,
             db_type,
+            use_tls,
         })
     }
 
@@ -287,11 +326,15 @@ impl ConnectionManager {
             recycling_method: RecyclingMethod::Fast,
         });
 
-        // Use TLS for all connections (supports both SSL and non-SSL servers)
-        let tls = create_tls_connector()?;
-
-        cfg.create_pool(Some(Runtime::Tokio1), tls)
-            .map_err(|e| AppError::Config(format!("Failed to create pool: {}", e)))
+        // Use TLS if needed, otherwise use no TLS
+        if params.use_tls {
+            let tls = create_tls_connector()?;
+            cfg.create_pool(Some(Runtime::Tokio1), tls)
+                .map_err(|e| AppError::Config(format!("Failed to create pool: {}", e)))
+        } else {
+            cfg.create_pool(Some(Runtime::Tokio1), tokio_postgres::NoTls)
+                .map_err(|e| AppError::Config(format!("Failed to create pool: {}", e)))
+        }
     }
 
     /// Get a connection by ID
@@ -411,16 +454,20 @@ impl ConnectionManager {
             recycling_method: RecyclingMethod::Fast,
         });
 
-        // Use TLS for all connections (supports both SSL and non-SSL servers)
-        let tls = create_tls_connector()?;
-
-        let pool = cfg.create_pool(Some(Runtime::Tokio1), tls)
-            .map_err(|e| AppError::Config(format!("Failed to create test pool: {}", e)))?;
+        // Use TLS if needed, otherwise use no TLS
+        let pool = if params.use_tls {
+            let tls = create_tls_connector()?;
+            cfg.create_pool(Some(Runtime::Tokio1), tls)
+                .map_err(|e| AppError::Config(format!("Failed to create test pool: {}", e)))?
+        } else {
+            cfg.create_pool(Some(Runtime::Tokio1), tokio_postgres::NoTls)
+                .map_err(|e| AppError::Config(format!("Failed to create test pool: {}", e)))?
+        };
 
         let start = std::time::Instant::now();
         
         let client = pool.get().await.map_err(|e| {
-            AppError::Connection(format!("Failed to connect: {} (Check host, port, credentials, and database name. For Neon, ensure the connection string is correct)", e))
+            AppError::Connection(format!("Failed to connect: {} (Check host, port, credentials, and database name)", e))
         })?;
 
         // Get server version
@@ -487,6 +534,7 @@ mod tests {
         assert_eq!(params.password, "mypass");
         assert_eq!(params.database, "mydb");
         assert_eq!(params.db_type, DatabaseType::Postgres);
+        assert_eq!(params.use_tls, false); // localhost uses no TLS
     }
 
     #[test]
@@ -495,6 +543,7 @@ mod tests {
         let params = ConnectionParams::from_connection_string(conn_str).unwrap();
         
         assert_eq!(params.port, 5432);
+        assert_eq!(params.use_tls, false); // remote hosts without explicit sslmode don't use TLS by default
     }
 
     #[test]
@@ -504,6 +553,47 @@ mod tests {
         
         assert_eq!(params.db_type, DatabaseType::Postgres);
         assert_eq!(params.port, 5433);
+        assert_eq!(params.use_tls, false); // remote hosts without explicit sslmode don't use TLS by default
+    }
+
+    #[test]
+    fn test_parse_connection_string_neon_uses_tls() {
+        let conn_str = "postgres://user:pass@abc123.neon.tech:5432/mydb";
+        let params = ConnectionParams::from_connection_string(conn_str).unwrap();
+        
+        assert_eq!(params.use_tls, true); // Neon hosts always use TLS
+    }
+
+    #[test]
+    fn test_parse_connection_string_aws_rds_no_tls() {
+        let conn_str = "postgresql://postgres:password@bizapps.colw6wk6ys04.us-east-1.rds.amazonaws.com:5432/bizTask360";
+        let params = ConnectionParams::from_connection_string(conn_str).unwrap();
+        
+        assert_eq!(params.use_tls, false); // AWS RDS uses no TLS by default (can use explicit sslmode if needed)
+    }
+
+    #[test]
+    fn test_parse_connection_string_explicit_sslmode_disable() {
+        let conn_str = "postgres://user:pass@neon.example.com/db?sslmode=disable";
+        let params = ConnectionParams::from_connection_string(conn_str).unwrap();
+        
+        assert_eq!(params.use_tls, false); // explicit sslmode=disable overrides host detection
+    }
+
+    #[test]
+    fn test_parse_connection_string_explicit_sslmode_require() {
+        let conn_str = "postgres://user:pass@localhost/db?sslmode=require";
+        let params = ConnectionParams::from_connection_string(conn_str).unwrap();
+        
+        assert_eq!(params.use_tls, true); // explicit sslmode=require overrides host detection
+    }
+
+    #[test]
+    fn test_parse_connection_string_neon_with_explicit_sslmode() {
+        let conn_str = "postgres://user:pass@abc123.neon.tech/db?sslmode=require";
+        let params = ConnectionParams::from_connection_string(conn_str).unwrap();
+        
+        assert_eq!(params.use_tls, true); // explicit sslmode=require (Neon also requires it anyway)
     }
 
     #[test]

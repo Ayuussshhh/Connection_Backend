@@ -1,29 +1,33 @@
 //! Application state management
 //!
 //! Contains shared state accessible across all handlers.
+//! DATABASE-ONLY: All storage is backed by PostgreSQL, no in-memory fallbacks.
 
 use crate::connection::ConnectionManager;
-use crate::db::DatabaseManager;
+use crate::db::{UserService, ProjectService};
 use crate::pipeline::MetadataStore;
 use crate::proposal::ProposalStore;
 use crate::snapshot::{SnapshotStore, RulesEngine};
-use crate::users::UserStore;
+use deadpool_postgres::Pool;
 use std::sync::Arc;
 
 /// Application state shared across all handlers
+/// All operations require a valid database connection
 pub struct AppState {
-    /// New: Dynamic connection manager for multi-database support
-    pub connections: ConnectionManager,
+    /// Database connection pool (required)
+    pub db_pool: Pool,
     
-    /// Legacy: Database manager instance (for backward compatibility)
-    /// This is optional - server can start without .env database config
-    pub db: Option<DatabaseManager>,
+    /// User service for database operations (required)
+    pub user_service: UserService,
+    
+    /// Project service for database operations (required)
+    pub project_service: ProjectService,
+    
+    /// Dynamic connection manager for multi-database support
+    pub connections: ConnectionManager,
     
     /// Governance Pipeline: Metadata store for proposals, snapshots, and audit logs
     pub metadata: MetadataStore,
-    
-    /// User management store (has internal locking)
-    pub users: UserStore,
     
     /// Proposal management store (has internal locking)
     pub proposals: ProposalStore,
@@ -39,27 +43,17 @@ pub struct AppState {
 }
 
 impl AppState {
-    /// Create new application state with connection manager only (new way)
-    pub fn new(jwt_secret: String) -> Self {
+    /// Create new application state with database pool (the only way)
+    pub fn new(pool: Pool, jwt_secret: String) -> Self {
+        let user_service = UserService::new(pool.clone());
+        let project_service = ProjectService::new(pool.clone());
+        
         Self {
+            db_pool: pool,
+            user_service,
+            project_service,
             connections: ConnectionManager::new(),
-            db: None,
             metadata: MetadataStore::new(),
-            users: UserStore::new(),
-            proposals: ProposalStore::new(),
-            snapshots: SnapshotStore::new(),
-            rules: RulesEngine::new(),
-            jwt_secret,
-        }
-    }
-    
-    /// Create new application state with legacy database manager
-    pub fn with_legacy_db(db: DatabaseManager, jwt_secret: String) -> Self {
-        Self {
-            connections: ConnectionManager::new(),
-            db: Some(db),
-            metadata: MetadataStore::new(),
-            users: UserStore::new(),
             proposals: ProposalStore::new(),
             snapshots: SnapshotStore::new(),
             rules: RulesEngine::new(),

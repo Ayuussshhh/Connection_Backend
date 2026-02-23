@@ -4,6 +4,7 @@
 
 pub mod auth;
 pub mod connection;
+pub mod project;
 mod database;
 mod foreign_key;
 pub mod pipeline;
@@ -56,6 +57,20 @@ pub fn create_router(state: SharedState, settings: &Settings) -> Router {
         .route("/api/auth/me", get(auth::me))
         .route("/api/auth/role/{user_id}", put(auth::update_role))
         .route("/api/users", get(auth::list_users))
+        
+        // ============================================
+        // PROJECT MANAGEMENT API
+        // Workspace/project organization
+        // ============================================
+        .route("/api/projects", post(project::create_project))
+        .route("/api/projects", get(project::list_projects))
+        .route("/api/projects/{id}", get(project::get_project))
+        .route("/api/projects/{id}", put(project::update_project))
+        .route("/api/projects/{id}", delete(project::delete_project))
+        .route("/api/projects/{project_id}/connections", post(project::save_connection))
+        .route("/api/projects/{project_id}/connections", get(project::list_connections))
+        .route("/api/projects/{project_id}/connections/{connection_id}", delete(project::remove_connection))
+        .route("/api/projects/{project_id}/connections/{connection_id}/activate", post(project::activate_connection))
         
         // ============================================
         // CONNECTION MANAGEMENT API

@@ -28,13 +28,12 @@ mod state;
 mod users;
 
 use crate::config::Settings;
-use crate::db::DatabaseManager;
 use crate::routes::create_router;
 use crate::state::AppState;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::TcpListener;
-use tracing::{info, warn};
+use tracing::{info, warn, error};
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 #[tokio::main]
@@ -55,27 +54,24 @@ async fn main() -> anyhow::Result<()> {
             "schemaflow-dev-secret-change-in-production".to_string()
         });
 
-    // Try to initialize legacy database manager (optional)
-    // If .env has database config, use it for backward compatibility
-    let state = match DatabaseManager::new(&settings.database).await {
-        Ok(db_manager) => {
-            info!("🔌 Legacy database connection established (from .env)");
-            Arc::new(AppState::with_legacy_db(db_manager, jwt_secret))
+    // Initialize database pool - REQUIRED (no fallback to in-memory)
+    let state = match init_database_pool().await {
+        Ok(pool) => {
+            info!("✅ Database pool created successfully");
+            
+            // Create tables if they don't exist
+            if let Err(e) = create_database_tables(&pool).await {
+                warn!("⚠️  Warning creating tables: {}", e);
+            }
+            
+            Arc::new(AppState::new(pool, jwt_secret))
         }
         Err(e) => {
-            warn!("⚠️  No legacy database configured: {}", e);
-            info!("💡 Server starting without pre-configured database.");
-            info!("   Use POST /api/connections to connect to any database.");
-            Arc::new(AppState::new(jwt_secret))
+            error!("❌ FATAL: Failed to initialize database pool: {}", e);
+            error!("DATABASE_URL must be set in .env and database must be accessible");
+            panic!("Cannot start server without database connection");
         }
     };
-    
-    // Initialize default admin user
-    if let Err(e) = state.users.init_default_admin().await {
-        warn!("⚠️  Failed to initialize default admin: {}", e);
-    } else {
-        info!("👤 Default admin user initialized (admin@schemaflow.local / admin123)");
-    }
 
     // Build the router
     let app = create_router(state, &settings);
@@ -142,6 +138,201 @@ fn init_tracing() {
                 .compact(),
         )
         .init();
+}
+
+/// Initialize database pool from DATABASE_URL
+async fn init_database_pool() -> anyhow::Result<deadpool_postgres::Pool> {
+    // Load .env file first
+    let _ = dotenvy::dotenv();
+    
+    let database_url = std::env::var("DATABASE_URL")
+        .map_err(|_| anyhow::anyhow!("DATABASE_URL not set in environment or .env file"))?;
+
+    // Parse the DATABASE_URL using tokio_postgres::Config
+    let config = database_url.parse::<tokio_postgres::Config>()
+        .map_err(|e| anyhow::anyhow!("Failed to parse DATABASE_URL: {}", e))?;
+
+    // Extract connection parameters from parsed config
+    let hosts = config.get_hosts();
+    let host_str = if !hosts.is_empty() {
+        match &hosts[0] {
+            tokio_postgres::config::Host::Tcp(s) => s.clone(),
+        }
+    } else {
+        return Err(anyhow::anyhow!("No host in DATABASE_URL"));
+    };
+    
+    let ports = config.get_ports();
+    let port = if !ports.is_empty() { ports[0] } else { 5432 };
+    
+    let user = config.get_user()
+        .map(|u| u.to_string())
+        .ok_or_else(|| anyhow::anyhow!("No user in DATABASE_URL"))?;
+    
+    let password = config.get_password()
+        .map(|p| String::from_utf8_lossy(p).to_string())
+        .unwrap_or_default();
+    
+    let database = config.get_dbname()
+        .map(|db| db.to_string())
+        .ok_or_else(|| anyhow::anyhow!("No database name in DATABASE_URL"))?;
+
+    // Determine if TLS is needed (Neon requires it)
+    let use_tls = host_str.contains("neon.tech") || database_url.contains("sslmode=require");
+
+    // Create deadpool config
+    use deadpool_postgres::{Config, ManagerConfig, RecyclingMethod};
+    
+    let mut cfg = Config::new();
+    cfg.host = Some(host_str.clone());
+    cfg.port = Some(port);
+    cfg.user = Some(user);
+    cfg.password = Some(password);
+    cfg.dbname = Some(database);
+    cfg.manager = Some(ManagerConfig {
+        recycling_method: RecyclingMethod::Fast,
+    });
+
+    // Create pool with TLS support if needed
+    let pool = if use_tls {
+        // Create TLS connector for Neon
+        let certs = rustls_native_certs::load_native_certs();
+        let mut root_store = rustls::RootCertStore::empty();
+        for cert in certs.certs {
+            root_store.add(cert).ok();
+        }
+
+        let tls_config = rustls::ClientConfig::builder()
+            .with_root_certificates(root_store)
+            .with_no_client_auth();
+
+        let tls = tokio_postgres_rustls::MakeRustlsConnect::new(tls_config);
+        
+        cfg.create_pool(Some(deadpool_postgres::Runtime::Tokio1), tls)
+            .map_err(|e| anyhow::anyhow!("Failed to create TLS pool: {}", e))?
+    } else {
+        cfg.create_pool(Some(deadpool_postgres::Runtime::Tokio1), tokio_postgres::NoTls)
+            .map_err(|e| anyhow::anyhow!("Failed to create pool: {}", e))?
+    };
+
+    // Test the connection
+    let client = pool.get().await
+        .map_err(|e| anyhow::anyhow!("Failed to get pool connection: {}", e))?;
+    
+    // Simple test query to verify connection works
+    let _row = client.query_one("SELECT 1 as ok", &[])
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to verify database connection: {}", e))?;
+
+    info!("✅ Database connection successful (TLS: {})", use_tls);
+    Ok(pool)
+}
+
+/// Create database tables if they don't exist
+async fn create_database_tables(pool: &deadpool_postgres::Pool) -> anyhow::Result<()> {
+    let client = pool.get().await?;
+
+    // Create roles table (for managing user roles)
+    client.execute(
+        "CREATE TABLE IF NOT EXISTS roles (
+            id SERIAL PRIMARY KEY,
+            name VARCHAR(50) UNIQUE NOT NULL,
+            description TEXT,
+            permissions TEXT[],
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )",
+        &[],
+    ).await?;
+
+    // Create users table
+    client.execute(
+        "CREATE TABLE IF NOT EXISTS users (
+            id SERIAL PRIMARY KEY,
+            email VARCHAR(255) UNIQUE NOT NULL,
+            password_hash VARCHAR(255) NOT NULL,
+            name VARCHAR(255),
+            avatar_url TEXT,
+            role_id INTEGER DEFAULT 1 REFERENCES roles(id),
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )",
+        &[],
+    ).await?;
+
+    // Create projects table
+    client.execute(
+        "CREATE TABLE IF NOT EXISTS projects (
+            id SERIAL PRIMARY KEY,
+            owner_id INTEGER NOT NULL,
+            name VARCHAR(255) NOT NULL,
+            description TEXT,
+            icon VARCHAR(50),
+            color VARCHAR(7),
+            is_private BOOLEAN DEFAULT true,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (owner_id) REFERENCES users(id) ON DELETE CASCADE
+        )",
+        &[],
+    ).await?;
+
+    // Create project_members table
+    client.execute(
+        "CREATE TABLE IF NOT EXISTS project_members (
+            id SERIAL PRIMARY KEY,
+            project_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            role VARCHAR(50) NOT NULL DEFAULT 'editor',
+            joined_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+            UNIQUE(project_id, user_id)
+        )",
+        &[],
+    ).await?;
+
+    // Create saved_connections table
+    client.execute(
+        "CREATE TABLE IF NOT EXISTS saved_connections (
+            id SERIAL PRIMARY KEY,
+            project_id INTEGER NOT NULL,
+            connection_string VARCHAR(1024) NOT NULL,
+            encrypted_password TEXT,
+            database_type VARCHAR(50),
+            connection_name VARCHAR(255),
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+        )",
+        &[],
+    ).await?;
+
+    // Insert default roles if they don't exist
+    let _ = client.execute(
+        "INSERT INTO roles (name, description, permissions) VALUES 
+         ('admin', 'Administrator with full access', '{}'),
+         ('editor', 'Can edit and manage content', '{}'),
+         ('viewer', 'Read-only access', '{}')
+         ON CONFLICT (name) DO NOTHING",
+        &[],
+    ).await;
+
+    // Create indexes for performance
+    let _ = client.execute(
+        "CREATE INDEX IF NOT EXISTS idx_projects_owner_id ON projects(owner_id)",
+        &[],
+    ).await;
+    let _ = client.execute(
+        "CREATE INDEX IF NOT EXISTS idx_project_members_project_id ON project_members(project_id)",
+        &[],
+    ).await;
+    let _ = client.execute(
+        "CREATE INDEX IF NOT EXISTS idx_saved_connections_project_id ON saved_connections(project_id)",
+        &[],
+    ).await;
+
+    info!("✅ Database tables initialized");
+    Ok(())
 }
 
 /// Graceful shutdown signal handler

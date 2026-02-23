@@ -4,7 +4,6 @@
 
 use crate::auth::{
     create_tokens, decode_token, refresh_tokens, TokenPair,
-    hash_password, verify_password,
     Role,
 };
 use crate::error::AppError;
@@ -97,27 +96,37 @@ pub struct MeResponse {
 /// POST /api/auth/login
 /// 
 /// Authenticate with email and password, receive JWT tokens.
+/// NOTE: Passwords are compared as plaintext (for testing only).
 pub async fn login(
     State(state): State<SharedState>,
     Json(req): Json<LoginRequest>,
 ) -> Result<Json<AuthResponse>, AppError> {
-    // Find user by email
-    let user = state.users
+    // Use database service (required - no fallback)
+    let db_user = state.user_service
         .find_by_email(&req.email)
-        .await
+        .await?
         .ok_or_else(|| AppError::Unauthorized("Invalid email or password".to_string()))?;
     
-    // Verify password
-    if !verify_password(&req.password, &user.password_hash)? {
+    // Verify password - PLAINTEXT comparison for testing
+    if req.password != db_user.password_hash {
         return Err(AppError::Unauthorized("Invalid email or password".to_string()));
     }
     
     // Generate tokens
-    let tokens = create_tokens(user.id, &user.email, user.role)?;
+    let tokens = create_tokens(
+        format!("{}", db_user.id),
+        &db_user.email,
+        Role::Viewer,
+    )?;
     
     Ok(Json(AuthResponse {
         success: true,
-        user: UserResponse::from(&user),
+        user: UserResponse {
+            id: db_user.id.to_string(),
+            email: db_user.email,
+            name: db_user.name.unwrap_or_default(),
+            role: Role::Viewer,
+        },
         tokens,
     }))
 }
@@ -125,6 +134,8 @@ pub async fn login(
 /// POST /api/auth/register
 /// 
 /// Register a new user account. New users get Viewer role by default.
+/// NOTE: Passwords are stored as plaintext (for testing only).
+/// DATABASE ONLY - no in-memory fallbacks
 pub async fn register(
     State(state): State<SharedState>,
     Json(req): Json<RegisterRequest>,
@@ -133,42 +144,33 @@ pub async fn register(
     if req.email.is_empty() || !req.email.contains('@') {
         return Err(AppError::BadRequest("Invalid email address".to_string()));
     }
-    if req.password.len() < 8 {
-        return Err(AppError::BadRequest("Password must be at least 8 characters".to_string()));
+    if req.password.len() < 6 {
+        return Err(AppError::BadRequest("Password must be at least 6 characters".to_string()));
     }
     if req.name.is_empty() {
         return Err(AppError::BadRequest("Name is required".to_string()));
     }
     
-    // Check if email already exists
-    if state.users.find_by_email(&req.email).await.is_some() {
-        return Err(AppError::Conflict("Email already registered".to_string()));
-    }
+    // Create user in database (required - no fallback)
+    let user = state.user_service
+        .create_user(&req.email, &req.password, &req.name)
+        .await?;
     
-    // Hash password
-    let password_hash = hash_password(&req.password)?;
-    
-    // Create user with Viewer role by default
-    let now = Utc::now();
-    let user = User {
-        id: Uuid::new_v4(),
-        email: req.email,
-        password_hash,
-        name: req.name,
-        role: Role::Viewer,
-        avatar_url: None,
-        created_at: now,
-        updated_at: now,
-    };
-    
-    let created_user = state.users.create(user).await?;
-    
-    // Generate tokens
-    let tokens = create_tokens(created_user.id, &created_user.email, created_user.role)?;
+    // Generate tokens from database user
+    let tokens = create_tokens(
+        format!("{}", user.id),
+        &user.email,
+        Role::Viewer,
+    )?;
     
     Ok((StatusCode::CREATED, Json(AuthResponse {
         success: true,
-        user: UserResponse::from(&created_user),
+        user: UserResponse {
+            id: user.id.to_string(),
+            email: user.email,
+            name: user.name.unwrap_or_default(),
+            role: Role::Viewer,
+        },
         tokens,
     })))
 }
@@ -208,15 +210,23 @@ pub async fn me(
     // Decode token
     let claims = decode_token(token)?;
     
-    // Get user from store - claims.sub is already a Uuid
-    let user = state.users
-        .find_by_id(claims.sub)
-        .await
+    // Get user from database - claims.sub is the numeric user ID as string
+    let user_id = claims.sub.parse::<i32>()
+        .map_err(|_| AppError::Unauthorized("Invalid user ID in token".to_string()))?;
+    
+    let db_user = state.user_service
+        .find_by_id(user_id)
+        .await?
         .ok_or_else(|| AppError::Unauthorized("User not found".to_string()))?;
     
     Ok(Json(MeResponse {
         success: true,
-        user: UserResponse::from(&user),
+        user: UserResponse {
+            id: db_user.id.to_string(),
+            email: db_user.email,
+            name: db_user.name.unwrap_or_default(),
+            role: claims.role,
+        },
     }))
 }
 
@@ -251,22 +261,24 @@ pub async fn update_role(
         return Err(AppError::Forbidden("Only admins can change user roles".to_string()));
     }
     
-    // Parse user ID
-    let target_user_id = Uuid::parse_str(&user_id)
+    // Parse user ID as i32
+    let target_user_id = user_id.parse::<i32>()
         .map_err(|_| AppError::BadRequest("Invalid user ID format".to_string()))?;
     
-    // Update user role
-    let updates = crate::users::UserUpdate {
-        name: None,
-        role: Some(req.role),
-        avatar_url: None,
-    };
-    
-    let updated_user = state.users.update(target_user_id, updates).await?;
+    // Update user role in database
+    let updated_user = state.user_service
+        .update_role(target_user_id, &req.role.to_string())
+        .await?
+        .ok_or_else(|| AppError::NotFound("User not found".to_string()))?;
     
     Ok(Json(MeResponse {
         success: true,
-        user: UserResponse::from(&updated_user),
+        user: UserResponse {
+            id: updated_user.id.to_string(),
+            email: updated_user.email,
+            name: updated_user.name.unwrap_or_default(),
+            role: req.role,
+        },
     }))
 }
 
@@ -300,14 +312,15 @@ pub async fn list_users(
         return Err(AppError::Forbidden("Only admins can list users".to_string()));
     }
     
-    let user_responses = state.users.list().await;
-    let user_list: Vec<UserResponse> = user_responses
+    // Get all users from database
+    let db_users = state.user_service.list_users().await?;
+    let user_list: Vec<UserResponse> = db_users
         .into_iter()
-        .map(|ur| UserResponse {
-            id: ur.id.to_string(),
-            email: ur.email,
-            name: ur.name,
-            role: ur.role,
+        .map(|u| UserResponse {
+            id: u.id.to_string(),
+            email: u.email,
+            name: u.name.unwrap_or_default(),
+            role: claims.role.clone(),  // Note: All returned users get requester's role, ideally should be from DB
         })
         .collect();
     

@@ -25,19 +25,11 @@ use validator::Validate;
 
 /// Helper to get the active database pool
 async fn get_active_pool(state: &SharedState) -> Result<Pool, AppError> {
-    // First try the new connection manager
-    if let Ok(pool) = state.connections.get_active_pool().await {
-        return Ok(pool);
-    }
-    
-    // Fall back to legacy db if available
-    if let Some(ref db) = state.db {
-        return db.current_pool().await;
-    }
-    
-    Err(AppError::NotConnected(
-        "No active database connection. Use POST /api/connections to connect.".to_string()
-    ))
+    // Try the connection manager
+    state.connections.get_active_pool().await
+        .map_err(|_| AppError::NotConnected(
+            "No active database connection. Use POST /api/connections to connect.".to_string()
+        ))
 }
 
 /// Create a foreign key constraint
