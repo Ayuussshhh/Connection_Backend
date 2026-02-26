@@ -1,4 +1,4 @@
-# SchemaFlow - Interactive Database Platform 🚀
+# NewBase - One of a kind platform to manage database, schema changes and migration all in one place with the PR and View features without breaking the database
 
 A **real-time collaborative database schema management platform** - think "Figma for Databases".
 
