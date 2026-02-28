@@ -123,7 +123,7 @@ impl UserService {
     }
 
     // Update user role
-    pub async fn update_role(&self, id: i32, role_name: &str) -> Result<Option<DbUser>, AppError> {
+    pub async fn update_role(&self, id: i32, _role_name: &str) -> Result<Option<DbUser>, AppError> {
         let client = self.pool.get().await
             .map_err(|e| AppError::Internal(format!("Database pool error: {}", e)))?;
 

@@ -9,7 +9,7 @@ mod password;
 pub use jwt::{Claims, TokenPair, create_tokens, decode_token, refresh_tokens};
 #[allow(unused_imports)]
 pub use middleware::auth_middleware;
-pub use password::{hash_password, verify_password};
+pub use password::hash_password;
 
 use serde::{Deserialize, Serialize};
 
